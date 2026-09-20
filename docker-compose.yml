@@ -19,7 +19,6 @@ services:
       args:
         CLAUDE_VERSION: ${CLAUDE_VERSION:-latest}
     image: local/claude-code-sandbox:latest
-    container_name: claude-code-sandbox
     working_dir: /workspace
 
     # Claude runs with the host user's UID/GID so files created in
