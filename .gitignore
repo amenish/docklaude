@@ -1,0 +1,32 @@
+run-agent.sh
+# Local environment / secrets
+.env
+.env.*
+!.env.example
+
+# Claude / local credentials
+.claude/
+claude-code-home/
+*.auth
+*.token
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.idea/
+.vscode/
+
+# Temporary files
+*.tmp
+*.swp
+*~
+
+# Build / test artifacts
+coverage/
+dist/
+build/

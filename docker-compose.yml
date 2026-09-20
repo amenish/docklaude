@@ -1,0 +1,84 @@
+services:
+  claude-init:
+    image: alpine:3.22
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        mkdir -p /home/agent/.claude
+        touch /home/agent/.claude.json
+        chown -R ${CONTAINER_UID}:${CONTAINER_GID} /home/agent
+    user: "0:0"
+    volumes:
+      - claude-home:/home/agent
+    restart: "no"
+
+  claude:
+    build:
+      context: .
+      args:
+        CLAUDE_VERSION: ${CLAUDE_VERSION:-latest}
+    image: local/claude-code-sandbox:latest
+    container_name: claude-code-sandbox
+    working_dir: /workspace
+
+    # Claude runs with the host user's UID/GID so files created in
+    # /workspace belong to the host user instead of root.
+    user: "${CONTAINER_UID:?CONTAINER_UID is required}:${CONTAINER_GID:?CONTAINER_GID is required}"
+
+    stdin_open: true
+    tty: true
+    init: true
+
+    # Everything in the image is read-only. RW is limited to the
+    # selected workspace and Claude's persistent home.
+    read_only: true
+
+    security_opt:
+      - no-new-privileges:true
+
+    cap_drop:
+      - ALL
+
+    pids_limit: 512
+    mem_limit: 8g
+    cpus: 4.0
+
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=2g
+      - /run:rw,noexec,nosuid,nodev,size=64m
+
+    volumes:
+      # The selected host directory is the only host filesystem exposed
+      # to Claude and is intentionally writable.
+      - type: bind
+        source: ${WORKSPACE_DIR:?WORKSPACE_DIR is required}
+        target: /workspace
+        read_only: false
+
+      # Persistent Claude configuration/authentication.
+      - type: volume
+        source: claude-home
+        target: /home/agent
+        read_only: false
+
+    environment:
+      HOME: /home/agent
+      CLAUDE_CONFIG_DIR: /home/agent/.claude
+      USE_BUILTIN_RIPGREP: "0"
+      DISABLE_AUTOUPDATER: "1"
+
+    networks:
+      - agent-net
+
+    depends_on:
+      claude-init:
+        condition: service_completed_successfully
+
+volumes:
+  claude-home:
+    name: claude-code-home
+
+networks:
+  agent-net:
+    driver: bridge
