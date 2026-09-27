@@ -145,6 +145,11 @@ if (( VERBOSE )); then
   echo "======================================================="
 fi
 
+if ! docker info >/dev/null 2>&1; then
+  echo "Docker no está ejecutándose. Intentando iniciarlo..."
+  sudo systemctl start docker
+fi
+
 run docker compose config --quiet
 
 if (( VERBOSE )); then
