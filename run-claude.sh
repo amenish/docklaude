@@ -4,6 +4,8 @@ set -Eeuo pipefail
 VERBOSE=0
 REBUILD=0
 WORKSPACE_ARG=""
+# Optional: export SCRIPT_DIR=/path/to/scripts before running
+SCRIPT_DIR="${SCRIPT_DIR:-}"
 
 usage() {
   cat <<EOF
@@ -168,4 +170,11 @@ if (( VERBOSE )); then
   echo '--- Fin arranque ---'
 fi
 
-exec docker compose run --rm claude
+docker compose run --rm claude
+
+if [[ -n "${SCRIPT_DIR:-}" && -f "$SCRIPT_DIR/git_manager.sh" ]]; then
+    read -r -p "¿Ejecutar git_manager.sh en el workspace '$WORKSPACE_DIR'? [y/N] " RUN_GIT_MANAGER
+    if [[ "$RUN_GIT_MANAGER" =~ ^[Yy]$ ]]; then
+        "$SCRIPT_DIR/git_manager.sh" "$WORKSPACE_DIR"
+    fi
+fi
