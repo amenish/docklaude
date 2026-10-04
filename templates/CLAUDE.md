@@ -58,13 +58,6 @@ Si encuentras en `.PROJECT.md` algo que es colectivo, muévelo y díselo al usua
 - Cuando el usuario pida «recuerda…», guárdalo enseguida en el sitio que toque
   y di dónde lo has guardado.
 
-## Memorias pendientes de importar
-
-Si existe `/home/agent/.claude/memoria-colectiva/inbox/proyectos/<proyecto>/`
-para el proyecto abierto (identifícalo por el nombre de su repo o de su carpeta
-y por el contenido), incorpora esas memorias a `.PROJECT.md`, borra esa carpeta
-y díselo al usuario. El procedimiento completo está en `IMPORTAR.md`.
-
 ## Índice de la memoria colectiva
 
 @/home/agent/.claude/memoria-colectiva/MEMORIA.md

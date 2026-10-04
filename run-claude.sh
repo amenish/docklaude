@@ -4,8 +4,6 @@ set -Eeuo pipefail
 VERBOSE=0
 REBUILD=0
 WORKSPACE_ARG=""
-# Optional: export SCRIPT_DIR=/path/to/scripts before running
-SCRIPT_DIR="${SCRIPT_DIR:-}"
 
 usage() {
   cat <<EOF
@@ -20,70 +18,47 @@ EOF
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    -v|--verbose)
-      VERBOSE=1
-      shift
-      ;;
-    -r|--rebuild)
-      REBUILD=1
-      shift
-      ;;
-    -h|--help)
-      usage
-      exit 0
-      ;;
+    -v|--verbose) VERBOSE=1 ;;
+    -r|--rebuild) REBUILD=1 ;;
+    -h|--help) usage; exit 0 ;;
     -*)
       echo "Opción desconocida: $1" >&2
       usage >&2
       exit 2
       ;;
     *)
-      [[ -z "$WORKSPACE_ARG" ]] || {
-        echo "Solo se admite un directorio." >&2
-        exit 2
-      }
+      [[ -z "$WORKSPACE_ARG" ]] || { echo "Solo se admite un directorio." >&2; exit 2; }
       WORKSPACE_ARG="$1"
-      shift
       ;;
   esac
+  shift
 done
 
 cd "$(dirname -- "$(realpath -- "$0")")"
 
-log() {
-  if (( VERBOSE )); then
-    printf '[verbose] %s\n' "$*" >&2
-  fi
-}
-
 run() {
-  log "Ejecutando: $*"
+  (( VERBOSE )) && printf '[verbose] Ejecutando: %s\n' "$*" >&2
   "$@"
 }
 
 choose_directory() {
   local selected="" start="$HOME"
+  local gui="${DISPLAY:-}${WAYLAND_DISPLAY:-}"
 
-  if command -v zenity >/dev/null 2>&1 && [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
-    selected="$(
-      zenity         --file-selection         --directory         --filename="${start}/"         --title='Selecciona el directorio de trabajo'         2>/dev/null || true
-    )"
+  if [[ -n "$gui" ]] && command -v zenity >/dev/null 2>&1; then
+    selected="$(zenity --file-selection --directory --filename="$start/" \
+      --title='Selecciona el directorio de trabajo' 2>/dev/null || true)"
   fi
 
-  if [[ -z "$selected" ]] &&
-     command -v kdialog >/dev/null 2>&1 &&
-     [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
-    selected="$(
-      kdialog         --getexistingdirectory "$start"         --title 'Selecciona el directorio de trabajo'         2>/dev/null || true
-    )"
+  if [[ -z "$selected" && -n "$gui" ]] && command -v kdialog >/dev/null 2>&1; then
+    selected="$(kdialog --getexistingdirectory "$start" \
+      --title 'Selecciona el directorio de trabajo' 2>/dev/null || true)"
   fi
 
   if [[ -z "$selected" ]] && command -v fzf >/dev/null 2>&1; then
-    selected="$(
-      find "$start"         -type d         -not -path '*/.git/*'         -print 2>/dev/null |
-      fzf         --height=80%         --layout=reverse         --border         --prompt='Directorio > '         --header='Filtra, usa flechas y Enter' ||
-      true
-    )"
+    selected="$(find "$start" -type d -not -path '*/.git/*' 2>/dev/null |
+      fzf --height=80% --layout=reverse --border --prompt='Directorio > ' \
+        --header='Filtra, usa flechas y Enter' || true)"
   fi
 
   [[ -n "$selected" ]] || {
@@ -100,45 +75,9 @@ else
   WORKSPACE_DIR="$(choose_directory)"
 fi
 
-[[ -d "$WORKSPACE_DIR" ]] || {
-  echo "Directorio no válido: $WORKSPACE_DIR" >&2
-  exit 1
-}
+[[ -d "$WORKSPACE_DIR" ]] || { echo "Directorio no válido: $WORKSPACE_DIR" >&2; exit 1; }
 
-# Claude should run as the host user, not merely as the current owner
-# of the selected directory. This keeps newly-created files owned by
-# the user launching the sandbox.
-export CONTAINER_UID="$(id -u)"
-export CONTAINER_GID="$(id -g)"
-export HOST_UID="$CONTAINER_UID"
-export HOST_GID="$CONTAINER_GID"
-export WORKSPACE_DIR
-
-# --- en run-claude.sh, tras calcular SUPPLEMENTARY_GIDS ---
-SUPPLEMENTARY_GIDS="$(id -G | tr ' ' '\n' | grep -vx "$(id -g)" | tr '\n' ' ' | sed 's/ $//')"
-
-GROUPS_OVERRIDE="$(dirname -- "$(realpath -- "$0")")/docker-compose.groups.yml"
-{
-  echo "services:"
-  echo "  claude:"
-  echo "    group_add:"
-  for g in $SUPPLEMENTARY_GIDS; do
-    printf '      - "%s"\n' "$g"
-  done
-} > "$GROUPS_OVERRIDE"
-
-if (( VERBOSE )); then
-  printf 'Grupos suplementarios: %s\n' "${SUPPLEMENTARY_GIDS:-(ninguno)}"
-  printf 'Override generado     : %s\n' "$GROUPS_OVERRIDE"
-fi
-
-export CONTAINER_UID CONTAINER_GID HOST_UID HOST_GID WORKSPACE_DIR
-
-OWNER_UID="$(stat -c '%u' -- "$WORKSPACE_DIR")"
-OWNER_GID="$(stat -c '%g' -- "$WORKSPACE_DIR")"
-MODE="$(stat -c '%A %a' -- "$WORKSPACE_DIR")"
-
-if [[ "$OWNER_UID" == 0 ]]; then
+if [[ "$(stat -c '%u' -- "$WORKSPACE_DIR")" == 0 ]]; then
   echo "El directorio pertenece a root; no se ejecutará Claude como root:" >&2
   echo "  $WORKSPACE_DIR" >&2
   echo >&2
@@ -147,21 +86,34 @@ if [[ "$OWNER_UID" == 0 ]]; then
   exit 1
 fi
 
-[[ -w "$WORKSPACE_DIR" ]] || {
-  echo "No tienes permiso de escritura en: $WORKSPACE_DIR" >&2
-  exit 1
-}
+[[ -w "$WORKSPACE_DIR" ]] || { echo "No tienes permiso de escritura en: $WORKSPACE_DIR" >&2; exit 1; }
+
+# Claude corre con el usuario que lanza el script (no con el dueño del
+# directorio), así los archivos nuevos son suyos.
+export WORKSPACE_DIR
+export CONTAINER_UID="$(id -u)"
+export CONTAINER_GID="$(id -g)"
+export DOCKLAUDE_HOST="$(uname -n)"
+
+# Grupos suplementarios del usuario, en un override que usan todos los
+# comandos de docker compose a través de COMPOSE_FILE.
+SUPPLEMENTARY_GIDS="$(id -G | tr ' ' '\n' | grep -vx "$CONTAINER_GID" | paste -sd, -)" || true
+printf 'services:\n  claude:\n    group_add: [%s]\n' "$SUPPLEMENTARY_GIDS" > docker-compose.groups.yml
+export COMPOSE_FILE=docker-compose.yml:docker-compose.groups.yml
+
+if ! docker info >/dev/null 2>&1; then
+  echo "Docker no está ejecutándose. Intentando iniciarlo..."
+  sudo systemctl start docker
+fi
 
 # --- Memoria ---
 # Colectiva: claude-memory/ (repo git privado, ignorado por docklaude), se
 # sincroniza antes de arrancar y se monta en ~/.claude del contenedor.
 # Del proyecto: .PROJECT.md en la raíz del workspace, fuera de su git.
-MEMORY_SYNC="$(dirname -- "$(realpath -- "$0")")/memory-sync.sh"
 PROJECT_MEMORY="$WORKSPACE_DIR/.PROJECT.md"
-export DOCKLAUDE_HOST="$(hostname)"
 
-"$MEMORY_SYNC" init
-"$MEMORY_SYNC" pull
+./memory-sync.sh init
+./memory-sync.sh pull
 
 [[ -e "$PROJECT_MEMORY" ]] || cp -- templates/PROJECT.md "$PROJECT_MEMORY"
 
@@ -175,63 +127,42 @@ fi
 
 if (( VERBOSE )); then
   echo "================ Claude Code / sandbox ================"
-  printf 'Script             : %s\n' "$0"
   printf 'Directorio host    : %s\n' "$WORKSPACE_DIR"
-  printf 'Propietario actual : UID=%s GID=%s\n' "$OWNER_UID" "$OWNER_GID"
-  printf 'Permisos directorio: %s\n' "$MODE"
-  printf 'Grupos suplementarios: %s\n' "${SUPPLEMENTARY_GIDS:-(ninguno)}"
-  printf 'Args group-add     : %s\n' "${GROUP_ADD_ARGS[*]:-(ninguno)}"
-  printf 'Usuario host       : UID=%s GID=%s\n' "$HOST_UID" "$HOST_GID"
+  printf 'Propietario/permisos: %s\n' "$(stat -c 'UID=%u GID=%g %A %a' -- "$WORKSPACE_DIR")"
   printf 'Usuario contenedor : UID=%s GID=%s\n' "$CONTAINER_UID" "$CONTAINER_GID"
-  printf 'Montaje workspace  : %s:/workspace:rw\n' "$WORKSPACE_DIR"
-  printf 'Claude home        : claude-code-home -> /home/agent\n'
-  printf 'Memoria colectiva  : %s -> ~/.claude/memoria-colectiva\n' "$(dirname -- "$MEMORY_SYNC")/claude-memory"
+  printf 'Grupos suplementarios: %s\n' "${SUPPLEMENTARY_GIDS:-(ninguno)}"
+  printf 'Claude home        : claude-code-home -> /home/agent (login local de este PC)\n'
+  printf 'Memoria colectiva  : %s -> ~/.claude/memoria-colectiva\n' "$PWD/claude-memory"
   printf 'Memoria proyecto   : %s\n' "$PROJECT_MEMORY"
-  printf 'Red                : habilitada\n'
   printf 'Seguridad          : read_only, cap_drop=ALL, no-new-privileges\n'
-  echo "======================================================="
-fi
-
-if ! docker info >/dev/null 2>&1; then
-  echo "Docker no está ejecutándose. Intentando iniciarlo..."
-  sudo systemctl start docker
-fi
-
-run docker compose config --quiet
-
-if (( VERBOSE )); then
-  echo '--- Configuración Compose resuelta ---'
+  echo "--- Configuración Compose resuelta ---"
   docker compose config
-  echo '--- Fin configuración Compose ---'
+  echo "======================================================="
+else
+  docker compose config --quiet
 fi
 
-if (( REBUILD )); then
-  run docker compose build --pull
-fi
-
-if (( VERBOSE )); then
-  echo '--- Arranque ---'
-  echo 'docker compose run --rm claude'
-  echo '--- Fin arranque ---'
-fi
+(( REBUILD )) && run docker compose build --pull
 
 CLAUDE_RC=0
-docker compose -f docker-compose.yml -f "$GROUPS_OVERRIDE" run --rm claude || CLAUDE_RC=$?
+run docker compose run --rm claude || CLAUDE_RC=$?
 
-# --- Al salir: 1) git del proyecto, 2) memoria colectiva ---
-# Tiene prioridad el helper propio en SCRIPT_DIR/git_manager.sh si existe.
-if [[ -n "${SCRIPT_DIR:-}" && -f "$SCRIPT_DIR/git_manager.sh" ]]; then
-    read -r -p "¿Ejecutar git_manager.sh en el workspace '$WORKSPACE_DIR'? [y/N] " RUN_GIT_MANAGER
-    if [[ "$RUN_GIT_MANAGER" =~ ^[Yy]$ ]]; then
-        "$SCRIPT_DIR/git_manager.sh" "$WORKSPACE_DIR" ||
-          echo "Aviso: git_manager.sh terminó con error." >&2
-    fi
-else
-    ./project-sync.sh "$WORKSPACE_DIR" ||
-      echo "Aviso: la sincronización git del proyecto no se completó." >&2
-fi
-
-"$MEMORY_SYNC" push ||
+# --- Al salir: 1) memoria colectiva, 2) git del proyecto ---
+# La memoria va primero: no pregunta nada y queda a salvo aunque se corte
+# después. Para el proyecto tiene prioridad el helper propio
+# $SCRIPT_DIR/git_manager.sh si existe.
+./memory-sync.sh push ||
   echo "Aviso: la memoria colectiva no se pudo subir; queda en local." >&2
 
-(( CLAUDE_RC == 0 )) || exit "$CLAUDE_RC"
+if [[ -n "${SCRIPT_DIR:-}" && -f "$SCRIPT_DIR/git_manager.sh" ]]; then
+  read -r -p "¿Ejecutar git_manager.sh en el workspace '$WORKSPACE_DIR'? [s/N] " ANSWER
+  if [[ "$ANSWER" =~ ^[SsYy]$ ]]; then
+    "$SCRIPT_DIR/git_manager.sh" "$WORKSPACE_DIR" ||
+      echo "Aviso: git_manager.sh terminó con error." >&2
+  fi
+else
+  ./project-sync.sh "$WORKSPACE_DIR" ||
+    echo "Aviso: la sincronización git del proyecto no se completó." >&2
+fi
+
+exit "$CLAUDE_RC"

@@ -29,10 +29,6 @@ RUN apk add --no-cache \
 
 RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_VERSION}"
 
-COPY --chown=agent:agent entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod 0755 /usr/local/bin/entrypoint.sh
-
 WORKDIR /workspace
 
-ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
-CMD ["claude"]
+ENTRYPOINT ["claude"]

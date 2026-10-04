@@ -21,6 +21,8 @@ El objetivo es permitir que Claude Code modifique un proyecto sin exponer direct
 - Selección de directorio mediante `zenity`, `kdialog` o `fzf`.
 - Claude se ejecuta con el UID/GID del usuario que lanza el sandbox.
 - Modo verbose para inspeccionar la configuración antes del arranque.
+- Memoria colectiva sincronizada entre PCs por git y memoria por proyecto en `.PROJECT.md`.
+- Al salir, ofrece hacer commit y push del proyecto.
 - La imagen solo se reconstruye cuando se solicita explícitamente mediante `--rebuild`.
 
 ## Requisitos
@@ -46,26 +48,25 @@ El usuario actual debe poder ejecutar Docker.
 Clona el repositorio:
 
 ```bash
-git clone https://github.com/USUARIO/claude-code-sandbox.git
-cd claude-code-sandbox
+git clone https://github.com/USUARIO/docklaude.git
+cd docklaude
 ```
 
 Da permisos de ejecución:
 
 ```bash
-chmod +x run-claude.sh auth-init.sh
+chmod +x run-claude.sh memory-sync.sh project-sync.sh
 ```
 
 ### Fijar la versión de Claude Code
 
-Opcionalmente:
+Opcionalmente, en `.env` (copia de `.env.example`):
 
-```bash
-cp .env.example .env
-# Edita CLAUDE_VERSION
+```dotenv
+CLAUDE_VERSION=2.1.XXX
 ```
 
-Si no se indica una versión, se utiliza `latest`.
+Si no se indica una versión, se utiliza `latest`. Tras cambiarla, reconstruye con `./run-claude.sh --rebuild`. Es recomendable probar las actualizaciones en una copia del proyecto.
 
 ## Construir la imagen
 
@@ -81,25 +82,18 @@ También puedes usar:
 docker compose build
 ```
 
-El script normal `./run-claude.sh` **no reconstruye** la imagen. Usa `--rebuild` cuando cambies el `Dockerfile`, `entrypoint.sh`, dependencias o versión de Claude Code.
+El script normal `./run-claude.sh` **no reconstruye** la imagen. Usa `--rebuild` cuando cambies el `Dockerfile`, dependencias o versión de Claude Code.
 
 ## Primer inicio de sesión
 
-Ejecuta:
-
-```bash
-./auth-init.sh
-```
-
-El script solicita un directorio y abre Claude Code para completar el login con `/login`.
+La primera vez que ejecutes `./run-claude.sh` en un PC, Claude Code pedirá iniciar sesión (`/login`). Cada PC tiene su propio login.
 
 La configuración y autenticación persistentes se almacenan en:
 
 ```text
 claude-code-home
 └── /home/agent
-    ├── .claude/
-    └── .claude.json
+    └── .claude/          # incluye .credentials.json y .claude.json
 ```
 
 El volumen sobrevive a la eliminación del contenedor.
@@ -180,7 +174,7 @@ cap_drop:
 
 Además:
 
-- `/workspace` es el único bind mount del host.
+- Los únicos bind mounts del host son el workspace (`/workspace`) y la memoria colectiva (`claude-memory/`).
 - `/home/agent` es un volumen Docker persistente, no una ruta del host.
 - `/tmp` y `/run` son `tmpfs`.
 - No se monta `$HOME` del host.
@@ -224,41 +218,17 @@ docker volume inspect claude-code-home
 
 ### Borrar la sesión persistente
 
-La configuración actual no incluye `fix-permissions.sh`.
-
-Para borrar la configuración y autenticación persistentes:
-
 ```bash
 docker volume rm claude-code-home
 ```
 
-Después:
-
-```bash
-./auth-init.sh
-```
-
-## Fijar la versión de Claude Code
-
-En `.env`:
-
-```dotenv
-CLAUDE_VERSION=2.1.XXX
-```
-
-Después:
-
-```bash
-./run-claude.sh --rebuild /ruta/al/proyecto
-```
-
-Es recomendable probar las actualizaciones en una copia del proyecto.
+El siguiente `./run-claude.sh` volverá a pedir `/login`.
 
 ## Token OAuth opcional
 
 Para entornos automatizados, Claude Code puede utilizar `CLAUDE_CODE_OAUTH_TOKEN` si la versión utilizada lo admite.
 
-No incluy tokens en el Dockerfile, `docker-compose.yml`, Git, logs ni capturas.
+No incluyas tokens en el Dockerfile, `docker-compose.yml`, Git, logs ni capturas.
 
 Para uso interactivo normal, se recomienda el login persistente mediante el volumen Docker.
 
@@ -278,48 +248,40 @@ Claude usa dos memorias, y no guarda nada en ningún otro sitio: la memoria auto
 - Los dos ficheros de configuración de git (el `.gitignore` de docklaude y el de cada proyecto) excluyen la memoria. docklaude es público: quien lo clone solo recibe las plantillas genéricas de `templates/`, nunca tu memoria.
 - La sincronización se hace en el host, así que las credenciales de git no entran en el contenedor. Si no hay red, se trabaja con la copia local y se sube la próxima vez.
 
+### Qué se sincroniza y qué no
+
+Solo la **memoria** (`claude-memory/`) viaja entre PCs. El resto de `~/.claude` se queda en el volumen `claude-code-home` de cada PC: login (`.credentials.json`), `.claude.json`, `settings.json`, skills, plugins, historial y sesiones. Así las credenciales de Claude nunca pasan por git, y cada PC hace su propio `/login`.
+
+Como defensa extra, `claude-memory/.gitignore` excluye `.credentials.json`, `.claude.json` y `*.jsonl`, y `memory-sync.sh` se niega a subir nada si alguno de ellos aparece en el repo.
+
 ### Puesta en marcha
 
-Crea un repo **privado** vacío (GitHub, Gitea…) y, en cada PC, dentro de docklaude:
+Crea un repo **privado** vacío (GitHub, Gitea…). En cada PC, dentro de docklaude, elige una:
 
 ```bash
+# a) Clonarlo a mano
 git clone git@github.com:USUARIO/claude-memory.git claude-memory
-./memory-sync.sh init        # crea la estructura si el repo está vacío
-git -C claude-memory push -u origin HEAD   # solo la primera vez, en un PC
+
+# b) Dejar que run-claude.sh lo clone la primera vez
+export DOCKLAUDE_MEMORY_REMOTE=git@github.com:USUARIO/claude-memory.git
 ```
 
-Si no clonas nada, `run-claude.sh` crea un `claude-memory/` local sin remote. Funciona igual, pero no se comparte entre PCs.
+`memory-sync.sh init` (lo ejecuta `run-claude.sh`) crea la estructura si el repo está vacío, y el primer `push` fija el upstream solo. Si `claude-memory/` es un `git init` con `origin` pero sin commits, adopta la rama remota.
+
+Si no hay remote, `run-claude.sh` crea un `claude-memory/` local. Funciona igual, pero no se comparte entre PCs hasta que añadas uno (`git -C claude-memory remote add origin <url>`); se subirá al salir.
 
 ### Al salir de Claude Code
 
 `run-claude.sh` hace, en este orden:
 
-1. **Git del proyecto.** Si tiene cambios, los muestra y pregunta si hacer commit y push (`project-sync.sh`).
-   - Pide el mensaje de commit, con uno por defecto si lo dejas vacío.
+1. **Memoria colectiva.** Commit y push de `claude-memory/`, siempre y sin preguntar.
+2. **Git del proyecto** (`project-sync.sh`):
+   - Si hay cambios, los muestra y pregunta si hacer commit. Pide el mensaje, con uno por defecto si lo dejas vacío.
+   - Si no hay cambios pero hay commits sin subir, pregunta si hacer push.
    - Hace `pull --rebase` antes del push y se detiene si hay un conflicto.
    - Si defines `SCRIPT_DIR` y existe `$SCRIPT_DIR/git_manager.sh`, se usa ese helper en su lugar.
-2. **Memoria colectiva.** Commit y push de `claude-memory/`, siempre y sin preguntar.
 
-Los dos pasos se ejecutan aunque Claude termine con error.
-
-### Importar las memorias antiguas de cada PC
-
-Antes de esto, cada PC guardaba la memoria en su volumen `claude-code-home`, con todos los proyectos mezclados. El volumen sigue montado en el contenedor, así que no hay que tocar el compose. Una vez en cada PC:
-
-```bash
-./run-claude.sh /ruta/a/cualquier/proyecto
-```
-
-Y dentro de Claude:
-
-> Importa las memorias antiguas siguiendo ~/.claude/memoria-colectiva/IMPORTAR.md
-
-Claude respalda las memorias antiguas en `claude-memory/inbox/` y las clasifica:
-- Las colectivas se fusionan con las de otros PCs.
-- Las del proyecto abierto pasan a su `.PROJECT.md`.
-- Las de otros proyectos esperan en `inbox/proyectos/<nombre>/` y se incorporan solas la próxima vez que abras ese proyecto.
-
-Al salir se sube todo.
+Los dos pasos se ejecutan aunque Claude termine con error. La memoria va primero para que quede a salvo aunque cortes las preguntas del proyecto.
 
 ### Conflictos
 
@@ -331,14 +293,11 @@ Son raros: cada memoria colectiva es un archivo, y el índice `MEMORIA.md` usa `
 .
 ├── Dockerfile
 ├── docker-compose.yml
-├── entrypoint.sh
 ├── run-claude.sh
-├── auth-init.sh
 ├── memory-sync.sh
 ├── project-sync.sh
 ├── templates/            # plantillas genéricas de memoria
 │   ├── CLAUDE.md
-│   ├── IMPORTAR.md
 │   └── PROJECT.md
 ├── .env.example
 ├── README.md
@@ -382,11 +341,7 @@ docker volume ls | grep claude-code-home
 
 No utilices `docker compose down -v` si quieres conservar la sesión.
 
-Si el volumen se ha eliminado:
-
-```bash
-./auth-init.sh
-```
+Si el volumen se ha eliminado, vuelve a hacer `/login` en la siguiente sesión.
 
 ### No aparece el selector gráfico
 

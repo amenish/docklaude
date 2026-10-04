@@ -1,4 +1,5 @@
 services:
+  # Prepara el volumen de ~/.claude con el UID/GID del usuario del host.
   claude-init:
     image: alpine:3.22
     command:
@@ -6,7 +7,6 @@ services:
       - -ec
       - |
         mkdir -p /home/agent/.claude
-        touch /home/agent/.claude.json
         chown -R ${CONTAINER_UID}:${CONTAINER_GID} /home/agent
     user: "0:0"
     volumes:
@@ -21,16 +21,15 @@ services:
     image: local/claude-code-sandbox:latest
     working_dir: /workspace
 
-    # Claude runs with the host user's UID/GID so files created in
-    # /workspace belong to the host user instead of root.
+    # Claude corre con el UID/GID del usuario del host, para que los
+    # archivos creados en /workspace sean suyos y no de root.
     user: "${CONTAINER_UID:?CONTAINER_UID is required}:${CONTAINER_GID:?CONTAINER_GID is required}"
 
     stdin_open: true
     tty: true
     init: true
 
-    # Everything in the image is read-only. RW is limited to the
-    # selected workspace and Claude's persistent home.
+    # Imagen en solo lectura: solo se escribe en el workspace y en el home.
     read_only: true
 
     security_opt:
@@ -48,41 +47,33 @@ services:
       - /run:rw,noexec,nosuid,nodev,size=64m
 
     volumes:
-      # The selected host directory is the only host filesystem exposed
-      # to Claude and is intentionally writable.
+      # El proyecto elegido: el único directorio de trabajo del host.
       - type: bind
         source: ${WORKSPACE_DIR:?WORKSPACE_DIR is required}
         target: /workspace
         read_only: false
 
-      # Persistent Claude configuration/authentication.
+      # Configuración y login de Claude, propios de cada PC.
       - type: volume
         source: claude-home
         target: /home/agent
         read_only: false
 
-      # Collective memory: private git clone in ./claude-memory (ignored by
-      # this repo), synced by run-claude.sh before and after each session.
+      # Memoria colectiva: clon privado en ./claude-memory (ignorado por
+      # este repo), sincronizado por run-claude.sh antes y después.
       - type: bind
         source: ./claude-memory
         target: /home/agent/.claude/memoria-colectiva
         read_only: false
 
-      # Global instructions loaded in every session.
+      # Instrucciones globales que se cargan en cada sesión.
       - type: bind
         source: ./claude-memory/CLAUDE.md
         target: /home/agent/.claude/CLAUDE.md
         read_only: true
 
     environment:
-      HOME: /home/agent
-      CLAUDE_CONFIG_DIR: /home/agent/.claude
-      USE_BUILTIN_RIPGREP: "0"
-      DISABLE_AUTOUPDATER: "1"
-      CONTAINER_UID: ${CONTAINER_UID:?}
-      CONTAINER_GID: ${CONTAINER_GID:?}
-      WORKSPACE_DIR: ${WORKSPACE_DIR:?}
-      # Memory lives in claude-memory/ and /workspace/.PROJECT.md only.
+      # La memoria vive solo en claude-memory/ y en /workspace/.PROJECT.md.
       CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1"
       DOCKLAUDE_HOST: ${DOCKLAUDE_HOST:-}
 
