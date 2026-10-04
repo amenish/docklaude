@@ -218,14 +218,20 @@ fi
 CLAUDE_RC=0
 docker compose -f docker-compose.yml -f "$GROUPS_OVERRIDE" run --rm claude || CLAUDE_RC=$?
 
+# --- Al salir: 1) git del proyecto, 2) memoria colectiva ---
+# Tiene prioridad el helper propio en SCRIPT_DIR/git_manager.sh si existe.
+if [[ -n "${SCRIPT_DIR:-}" && -f "$SCRIPT_DIR/git_manager.sh" ]]; then
+    read -r -p "¿Ejecutar git_manager.sh en el workspace '$WORKSPACE_DIR'? [y/N] " RUN_GIT_MANAGER
+    if [[ "$RUN_GIT_MANAGER" =~ ^[Yy]$ ]]; then
+        "$SCRIPT_DIR/git_manager.sh" "$WORKSPACE_DIR" ||
+          echo "Aviso: git_manager.sh terminó con error." >&2
+    fi
+else
+    ./project-sync.sh "$WORKSPACE_DIR" ||
+      echo "Aviso: la sincronización git del proyecto no se completó." >&2
+fi
+
 "$MEMORY_SYNC" push ||
   echo "Aviso: la memoria colectiva no se pudo subir; queda en local." >&2
 
 (( CLAUDE_RC == 0 )) || exit "$CLAUDE_RC"
-
-if [[ -n "${SCRIPT_DIR:-}" && -f "$SCRIPT_DIR/git_manager.sh" ]]; then
-    read -r -p "¿Ejecutar git_manager.sh en el workspace '$WORKSPACE_DIR'? [y/N] " RUN_GIT_MANAGER
-    if [[ "$RUN_GIT_MANAGER" =~ ^[Yy]$ ]]; then
-        "$SCRIPT_DIR/git_manager.sh" "$WORKSPACE_DIR"
-    fi
-fi

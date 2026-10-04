@@ -290,6 +290,18 @@ git -C claude-memory push -u origin HEAD   # solo la primera vez, en un PC
 
 Si no clonas nada, `run-claude.sh` crea un `claude-memory/` local sin remote. Funciona igual, pero no se comparte entre PCs.
 
+### Al salir de Claude Code
+
+`run-claude.sh` hace, en este orden:
+
+1. **Git del proyecto.** Si tiene cambios, los muestra y pregunta si hacer commit y push (`project-sync.sh`).
+   - Pide el mensaje de commit, con uno por defecto si lo dejas vacío.
+   - Hace `pull --rebase` antes del push y se detiene si hay un conflicto.
+   - Si defines `SCRIPT_DIR` y existe `$SCRIPT_DIR/git_manager.sh`, se usa ese helper en su lugar.
+2. **Memoria colectiva.** Commit y push de `claude-memory/`, siempre y sin preguntar.
+
+Los dos pasos se ejecutan aunque Claude termine con error.
+
 ### Importar las memorias antiguas de cada PC
 
 Antes de esto, cada PC guardaba la memoria en su volumen `claude-code-home`, con todos los proyectos mezclados. El volumen sigue montado en el contenedor, así que no hay que tocar el compose. Una vez en cada PC:
@@ -323,6 +335,7 @@ Son raros: cada memoria colectiva es un archivo, y el índice `MEMORIA.md` usa `
 ├── run-claude.sh
 ├── auth-init.sh
 ├── memory-sync.sh
+├── project-sync.sh
 ├── templates/            # plantillas genéricas de memoria
 │   ├── CLAUDE.md
 │   ├── IMPORTAR.md
