@@ -30,3 +30,9 @@ Thumbs.db
 coverage/
 dist/
 build/
+
+# Overrides generados por run-claude.sh en cada PC
+docker-compose.groups.yml
+
+# Memoria colectiva privada (repo git propio, nunca en docklaude)
+claude-memory/

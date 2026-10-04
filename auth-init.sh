@@ -32,5 +32,8 @@ export WORKSPACE_DIR
 export CONTAINER_UID="$(id -u)"
 export CONTAINER_GID="$(id -g)"
 
+# The compose file mounts claude-memory/, so it must exist.
+./memory-sync.sh init
+
 docker compose config --quiet
 docker compose run --rm claude claude

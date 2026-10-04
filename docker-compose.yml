@@ -61,6 +61,19 @@ services:
         target: /home/agent
         read_only: false
 
+      # Collective memory: private git clone in ./claude-memory (ignored by
+      # this repo), synced by run-claude.sh before and after each session.
+      - type: bind
+        source: ./claude-memory
+        target: /home/agent/.claude/memoria-colectiva
+        read_only: false
+
+      # Global instructions loaded in every session.
+      - type: bind
+        source: ./claude-memory/CLAUDE.md
+        target: /home/agent/.claude/CLAUDE.md
+        read_only: true
+
     environment:
       HOME: /home/agent
       CLAUDE_CONFIG_DIR: /home/agent/.claude
@@ -69,6 +82,9 @@ services:
       CONTAINER_UID: ${CONTAINER_UID:?}
       CONTAINER_GID: ${CONTAINER_GID:?}
       WORKSPACE_DIR: ${WORKSPACE_DIR:?}
+      # Memory lives in claude-memory/ and /workspace/.PROJECT.md only.
+      CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1"
+      DOCKLAUDE_HOST: ${DOCKLAUDE_HOST:-}
 
     networks:
       - agent-net

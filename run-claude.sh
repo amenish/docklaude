@@ -152,6 +152,27 @@ fi
   exit 1
 }
 
+# --- Memoria ---
+# Colectiva: claude-memory/ (repo git privado, ignorado por docklaude), se
+# sincroniza antes de arrancar y se monta en ~/.claude del contenedor.
+# Del proyecto: .PROJECT.md en la raíz del workspace, fuera de su git.
+MEMORY_SYNC="$(dirname -- "$(realpath -- "$0")")/memory-sync.sh"
+PROJECT_MEMORY="$WORKSPACE_DIR/.PROJECT.md"
+export DOCKLAUDE_HOST="$(hostname)"
+
+"$MEMORY_SYNC" init
+"$MEMORY_SYNC" pull
+
+[[ -e "$PROJECT_MEMORY" ]] || cp -- templates/PROJECT.md "$PROJECT_MEMORY"
+
+if git -C "$WORKSPACE_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1 &&
+   ! git -C "$WORKSPACE_DIR" check-ignore -q -- .PROJECT.md; then
+  GITIGNORE="$(git -C "$WORKSPACE_DIR" rev-parse --show-toplevel)/.gitignore"
+  [[ ! -s "$GITIGNORE" || -z "$(tail -c1 -- "$GITIGNORE")" ]] || echo >> "$GITIGNORE"
+  echo '.PROJECT.md' >> "$GITIGNORE"
+  echo "Añadido .PROJECT.md a $GITIGNORE"
+fi
+
 if (( VERBOSE )); then
   echo "================ Claude Code / sandbox ================"
   printf 'Script             : %s\n' "$0"
@@ -164,6 +185,8 @@ if (( VERBOSE )); then
   printf 'Usuario contenedor : UID=%s GID=%s\n' "$CONTAINER_UID" "$CONTAINER_GID"
   printf 'Montaje workspace  : %s:/workspace:rw\n' "$WORKSPACE_DIR"
   printf 'Claude home        : claude-code-home -> /home/agent\n'
+  printf 'Memoria colectiva  : %s -> ~/.claude/memoria-colectiva\n' "$(dirname -- "$MEMORY_SYNC")/claude-memory"
+  printf 'Memoria proyecto   : %s\n' "$PROJECT_MEMORY"
   printf 'Red                : habilitada\n'
   printf 'Seguridad          : read_only, cap_drop=ALL, no-new-privileges\n'
   echo "======================================================="
@@ -192,7 +215,13 @@ if (( VERBOSE )); then
   echo '--- Fin arranque ---'
 fi
 
-docker compose -f docker-compose.yml -f "$GROUPS_OVERRIDE" run --rm claude
+CLAUDE_RC=0
+docker compose -f docker-compose.yml -f "$GROUPS_OVERRIDE" run --rm claude || CLAUDE_RC=$?
+
+"$MEMORY_SYNC" push ||
+  echo "Aviso: la memoria colectiva no se pudo subir; queda en local." >&2
+
+(( CLAUDE_RC == 0 )) || exit "$CLAUDE_RC"
 
 if [[ -n "${SCRIPT_DIR:-}" && -f "$SCRIPT_DIR/git_manager.sh" ]]; then
     read -r -p "¿Ejecutar git_manager.sh en el workspace '$WORKSPACE_DIR'? [y/N] " RUN_GIT_MANAGER

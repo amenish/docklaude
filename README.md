@@ -262,6 +262,57 @@ No incluy tokens en el Dockerfile, `docker-compose.yml`, Git, logs ni capturas.
 
 Para uso interactivo normal, se recomienda el login persistente mediante el volumen Docker.
 
+## Memoria
+
+Claude usa dos memorias, y no guarda nada en ningún otro sitio: la memoria automática de Claude Code se desactiva con `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`.
+
+| Memoria | Qué guarda | Dónde vive | Cómo viaja |
+|---|---|---|---|
+| **Colectiva** | Tus hábitos, métodos, gustos y reglas | `claude-memory/` dentro de docklaude, montada en `~/.claude/memoria-colectiva` | Repo git **privado**, sincronizado por `run-claude.sh` |
+| **Del proyecto** | Solo el contexto de ese proyecto | `.PROJECT.md` en la raíz del proyecto (`/workspace/.PROJECT.md`) | Con el propio directorio del proyecto; nunca en su git |
+
+- `claude-memory/CLAUDE.md` se monta como `~/.claude/CLAUDE.md`. Se carga en cada sesión, importa las dos memorias y le indica a Claude dónde guardar cada cosa. Criterio: *«¿seguiría siendo cierto en otro proyecto?»*. Si la respuesta es sí, va a la colectiva.
+- `run-claude.sh`:
+  - **Antes** de arrancar el contenedor: hace `pull` de `claude-memory/` y crea `.PROJECT.md` si falta. Si el proyecto es un repo git, lo añade a su `.gitignore`.
+  - **Al salir:** hace commit y `push`.
+- Los dos ficheros de configuración de git (el `.gitignore` de docklaude y el de cada proyecto) excluyen la memoria. docklaude es público: quien lo clone solo recibe las plantillas genéricas de `templates/`, nunca tu memoria.
+- La sincronización se hace en el host, así que las credenciales de git no entran en el contenedor. Si no hay red, se trabaja con la copia local y se sube la próxima vez.
+
+### Puesta en marcha
+
+Crea un repo **privado** vacío (GitHub, Gitea…) y, en cada PC, dentro de docklaude:
+
+```bash
+git clone git@github.com:USUARIO/claude-memory.git claude-memory
+./memory-sync.sh init        # crea la estructura si el repo está vacío
+git -C claude-memory push -u origin HEAD   # solo la primera vez, en un PC
+```
+
+Si no clonas nada, `run-claude.sh` crea un `claude-memory/` local sin remote. Funciona igual, pero no se comparte entre PCs.
+
+### Importar las memorias antiguas de cada PC
+
+Antes de esto, cada PC guardaba la memoria en su volumen `claude-code-home`, con todos los proyectos mezclados. El volumen sigue montado en el contenedor, así que no hay que tocar el compose. Una vez en cada PC:
+
+```bash
+./run-claude.sh /ruta/a/cualquier/proyecto
+```
+
+Y dentro de Claude:
+
+> Importa las memorias antiguas siguiendo ~/.claude/memoria-colectiva/IMPORTAR.md
+
+Claude respalda las memorias antiguas en `claude-memory/inbox/` y las clasifica:
+- Las colectivas se fusionan con las de otros PCs.
+- Las del proyecto abierto pasan a su `.PROJECT.md`.
+- Las de otros proyectos esperan en `inbox/proyectos/<nombre>/` y se incorporan solas la próxima vez que abras ese proyecto.
+
+Al salir se sube todo.
+
+### Conflictos
+
+Son raros: cada memoria colectiva es un archivo, y el índice `MEMORIA.md` usa `merge=union`. Si dos PCs editan la misma memoria de forma distinta, `run-claude.sh` avisa y muestra el archivo. Resuélvelo en `claude-memory/` (`git status`, `git rebase --continue`) y ejecuta `./memory-sync.sh push`.
+
 ## Estructura
 
 ```text
@@ -271,8 +322,14 @@ Para uso interactivo normal, se recomienda el login persistente mediante el volu
 ├── entrypoint.sh
 ├── run-claude.sh
 ├── auth-init.sh
+├── memory-sync.sh
+├── templates/            # plantillas genéricas de memoria
+│   ├── CLAUDE.md
+│   ├── IMPORTAR.md
+│   └── PROJECT.md
 ├── .env.example
-└── README.md
+├── README.md
+└── claude-memory/        # tu memoria colectiva privada (ignorada por git)
 ```
 
 ## Seguridad de credenciales
