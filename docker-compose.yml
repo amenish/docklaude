@@ -66,6 +66,9 @@ services:
       CLAUDE_CONFIG_DIR: /home/agent/.claude
       USE_BUILTIN_RIPGREP: "0"
       DISABLE_AUTOUPDATER: "1"
+      CONTAINER_UID: ${CONTAINER_UID:?}
+      CONTAINER_GID: ${CONTAINER_GID:?}
+      WORKSPACE_DIR: ${WORKSPACE_DIR:?}
 
     networks:
       - agent-net

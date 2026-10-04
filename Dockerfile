@@ -21,6 +21,7 @@ RUN apk add --no-cache \
       py3-pip \
       nodejs \
       npm \
+      util-linux \
     && addgroup -S agent \
     && adduser -S -G agent -s /bin/bash agent \
     && mkdir -p /home/agent/.claude /workspace \

@@ -114,6 +114,26 @@ export HOST_UID="$CONTAINER_UID"
 export HOST_GID="$CONTAINER_GID"
 export WORKSPACE_DIR
 
+# --- en run-claude.sh, tras calcular SUPPLEMENTARY_GIDS ---
+SUPPLEMENTARY_GIDS="$(id -G | tr ' ' '\n' | grep -vx "$(id -g)" | tr '\n' ' ' | sed 's/ $//')"
+
+GROUPS_OVERRIDE="$(dirname -- "$(realpath -- "$0")")/docker-compose.groups.yml"
+{
+  echo "services:"
+  echo "  claude:"
+  echo "    group_add:"
+  for g in $SUPPLEMENTARY_GIDS; do
+    printf '      - "%s"\n' "$g"
+  done
+} > "$GROUPS_OVERRIDE"
+
+if (( VERBOSE )); then
+  printf 'Grupos suplementarios: %s\n' "${SUPPLEMENTARY_GIDS:-(ninguno)}"
+  printf 'Override generado     : %s\n' "$GROUPS_OVERRIDE"
+fi
+
+export CONTAINER_UID CONTAINER_GID HOST_UID HOST_GID WORKSPACE_DIR
+
 OWNER_UID="$(stat -c '%u' -- "$WORKSPACE_DIR")"
 OWNER_GID="$(stat -c '%g' -- "$WORKSPACE_DIR")"
 MODE="$(stat -c '%A %a' -- "$WORKSPACE_DIR")"
@@ -138,6 +158,8 @@ if (( VERBOSE )); then
   printf 'Directorio host    : %s\n' "$WORKSPACE_DIR"
   printf 'Propietario actual : UID=%s GID=%s\n' "$OWNER_UID" "$OWNER_GID"
   printf 'Permisos directorio: %s\n' "$MODE"
+  printf 'Grupos suplementarios: %s\n' "${SUPPLEMENTARY_GIDS:-(ninguno)}"
+  printf 'Args group-add     : %s\n' "${GROUP_ADD_ARGS[*]:-(ninguno)}"
   printf 'Usuario host       : UID=%s GID=%s\n' "$HOST_UID" "$HOST_GID"
   printf 'Usuario contenedor : UID=%s GID=%s\n' "$CONTAINER_UID" "$CONTAINER_GID"
   printf 'Montaje workspace  : %s:/workspace:rw\n' "$WORKSPACE_DIR"
@@ -170,7 +192,7 @@ if (( VERBOSE )); then
   echo '--- Fin arranque ---'
 fi
 
-docker compose run --rm claude
+docker compose -f docker-compose.yml -f "$GROUPS_OVERRIDE" run --rm claude
 
 if [[ -n "${SCRIPT_DIR:-}" && -f "$SCRIPT_DIR/git_manager.sh" ]]; then
     read -r -p "¿Ejecutar git_manager.sh en el workspace '$WORKSPACE_DIR'? [y/N] " RUN_GIT_MANAGER
